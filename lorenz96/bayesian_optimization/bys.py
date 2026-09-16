@@ -89,7 +89,7 @@ def run_sac(trial, lr, gamma, tau, h, bs):
     set_seed(SEED)
 
     env = Lorenz96Env(N=N_DIM, max_steps=MS_SEARCH)
-    decodef = SparseActuatorDecodef(N_DIM, N_ACT, sigma=2.5)
+    decoder = SparseActuatorDecodef(N_DIM, N_ACT, sigma=2.5)
     agent = SAC(sd=OBS_DIM_SAC, ad=N_ACT,
                 lr=lr, gamma=gamma, tau=tau,
                 h=h, bs=bs, buf=50000, ui=2)
@@ -113,32 +113,32 @@ def run_sac(trial, lr, gamma, tau, h, bs):
 
         e = env.get_error()
         integ = np.zeros(N_DIM)
-        defiv = np.zeros(N_DIM)
+        deriv = np.zeros(N_DIM)
         prev_u = np.zeros(N_DIM)
         prev_act = np.zeros(N_ACT)
         ep_rw = 0.0
 
         for _ in range(MS_SEARCH):
-            obs = build_sac_obs(e, integ, defiv, prev_u, prev_act,
+            obs = build_sac_obs(e, integ, deriv, prev_u, prev_act,
                                 N_DIM, N_ACT)
             obs_clip = np.clip(obs / 5.0, -2.0, 2.0)
             raw = agent.act(obs_clip)
 
             u_base = pid_base.compute(e)
-            u_residual = decodef.decode(raw, scale=act_scale)
+            u_residual = decoder.decode(raw, scale=act_scale)
             u = np.clip(u_base + u_residual, -50.0, 50.0)
 
             ns, en, done = env.step(u, n_substeps=N_SUBSTEPS)
             e_next = env.get_error()
 
             integ = np.clip(integ + e * dt_eff, -50.0, 50.0)
-            defiv = (e_next - e) / dt_eff
+            deriv = (e_next - e) / dt_eff
 
             base_r = compute_base_reward(e_next, u, N=N_DIM)
             smooth_r = -0.001 * np.mean((u - prev_u)**2)
             rw = float(np.clip(base_r + smooth_r, -100.0, 0.0))
 
-            nobs = build_sac_obs(e_next, integ, defiv, u, raw,
+            nobs = build_sac_obs(e_next, integ, deriv, u, raw,
                                  N_DIM, N_ACT)
             nobs_clip = np.clip(nobs / 5.0, -2.0, 2.0)
             agent.rb.push(obs_clip, raw, rw, nobs_clip, float(done))
@@ -158,7 +158,7 @@ def run_sac(trial, lr, gamma, tau, h, bs):
                 ep_rewards[-REPORT_INTERVAL:])
             trial.report(intermediate_value, ep)
             if trial.should_prune():
-                del agent, env, decodef, pid_base
+                del agent, env, decoder, pid_base
                 torch.cuda.empty_cache()
                 gc.collect()
                 raise optuna.TrialPruned()
@@ -176,12 +176,12 @@ def run_sac(trial, lr, gamma, tau, h, bs):
 
         e_e = env_eval.get_error()
         integ_e = np.zeros(N_DIM)
-        defiv_e = np.zeros(N_DIM)
+        deriv_e = np.zeros(N_DIM)
         prev_u_e = np.zeros(N_DIM)
         prev_act_e = np.zeros(N_ACT)
 
         for _ in range(EVAL_STEPS):
-            obs_e = build_sac_obs(e_e, integ_e, defiv_e,
+            obs_e = build_sac_obs(e_e, integ_e, deriv_e,
                                   prev_u_e, prev_act_e,
                                   N_DIM, N_ACT)
             obs_clip_e = np.clip(obs_e / 5.0, -2.0, 2.0)
@@ -190,7 +190,7 @@ def run_sac(trial, lr, gamma, tau, h, bs):
             u_base_e = pid_eval.compute(e_e)
             en_e = np.linalg.norm(e_e) / np.sqrt(N_DIM)
             adaptive_scale = max(1.0, min(8.0, 8.0 * en_e))
-            u_residual_e = decodef.decode(raw_e,
+            u_residual_e = decoder.decode(raw_e,
                                           scale=adaptive_scale)
             a_e = np.clip(u_base_e + u_residual_e,
                           -50.0, 50.0)
@@ -203,7 +203,7 @@ def run_sac(trial, lr, gamma, tau, h, bs):
 
             integ_e = np.clip(
                 integ_e + e_e * dt_eff, -50.0, 50.0)
-            defiv_e = (e_next_e - e_e) / dt_eff
+            deriv_e = (e_next_e - e_e) / dt_eff
             prev_u_e = a_e
             prev_act_e = raw_e
             e_e = e_next_e
@@ -214,7 +214,7 @@ def run_sac(trial, lr, gamma, tau, h, bs):
 
     result = total / len(EVAL_INITS)
 
-    del agent, env, decodef, pid_base
+    del agent, env, decoder, pid_base
     torch.cuda.empty_cache()
     gc.collect()
 

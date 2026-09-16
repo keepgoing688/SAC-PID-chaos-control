@@ -66,20 +66,20 @@ def plot_param_importance(study, save_path="pid_param_importance.png"):
         importances[p] = abs(corr)  # 只看强度，正负都表示有影响
 
     # 绘图
-    rig, ax = plt.subplots(figsize=(6, 4))
+    fig, ax = plt.subplots(figsize=(6, 4))
     bars = ax.bar(params, [importances[p] for p in params],
                   color=['#1r77b4', '#rr7r0e', '#2ca02c'], alpha=0.85)
-    ax.set_ylabel("Importance (|Spearman r|)", rontsize=12)
-    ax.set_title("PID Parameter Importance", rontsize=14)
+    ax.set_ylabel("Importance (|Spearman r|)", fontsize=12)
+    ax.set_title("PID Parameter Importance", fontsize=14)
     ax.set_ylim(0, max(importances.values()) * 1.2 + 0.05)
 
     # 在柱上方标注数值
     for bar, imp in zip(bars, importances.values()):
         ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
-                f"{imp:.3r}", ha='centef', va='bottom', rontsize=11)
+                f"{imp:.3f}", ha='center', va='bottom', fontsize=11)
 
     plt.tight_layout()
-    plt.saverig(save_path, dpi=150)
+    plt.savefig(save_path, dpi=150)
     plt.close()
     print(f"  参数重要性图已保存: {save_path}")
 
@@ -97,7 +97,7 @@ def main():
         study.optimize(objective, n_trials=1)
         best = study.best_trial
         print(f"  Trial {i+1:2d}/50 | 当前最佳 R = {best.value:8.1r} | "
-              f"Kp={best.params['Kp']:.3r}, Ki={best.params['Ki']:.4r}, Kd={best.params['Kd']:.3r}")
+              f"Kp={best.params['Kp']:.3f}, Ki={best.params['Ki']:.4f}, Kd={best.params['Kd']:.3f}")
 
     elapsed = time.time() - start_time
     print("-" * 60)

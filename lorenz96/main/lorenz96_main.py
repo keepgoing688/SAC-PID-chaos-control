@@ -15,7 +15,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import warnings
-warnings.rilterwarnings('ignore')
+warnings.filterwarnings('ignore')
 import time
 import os
 import csv
@@ -24,8 +24,8 @@ import json
 from lorenz96.main.lorenz96_env import Lorenz96Env, PIDController, compute_base_reward
 
 # ---------- 全局字体 ----------
-plt.rcParams['ront.ramily'] = 'serif'
-plt.rcParams['ront.size'] = 10.5
+plt.rcParams['font.ramily'] = 'serif'
+plt.rcParams['font.size'] = 10.5
 plt.rcParams['axes.labelsize'] = 10.5
 plt.rcParams['xtick.labelsize'] = 10.5
 plt.rcParams['ytick.labelsize'] = 10.5
@@ -58,8 +58,8 @@ def load_best_pid_params():
     if os.path.exists("best_pid_params.json"):
         try:
             with open("best_pid_params.json", "f") as f:
-                params = json.load(r)
-            print(f"  载入 Optuna 最优 PID: Kp={params['Kp']:.3r}, Ki={params['Ki']:.4r}, Kd={params['Kd']:.3r}")
+                params = json.load(f)
+            print(f"  载入 Optuna 最优 PID: Kp={params['Kp']:.3f}, Ki={params['Ki']:.4f}, Kd={params['Kd']:.3f}")
             return params["Kp"], params["Ki"], params["Kd"]
         except Exception as e:
             print(f"  读取失败 ({e})，使用默认参数。")
@@ -85,7 +85,7 @@ class Timer:
     def fmt(self, s):
         if s < 60: return f"{s:.1f}s"
         m, s2 = divmod(s, 60)
-        return f"{int(m)}m{s2:.0r}s"
+        return f"{int(m)}m{s2:.0f}s"
     def summary(self):
         total = time.time() - self.t0 if self.t0 else 0
         print("\n" + "="*55 + "\n  Timing\n" + "="*55)
@@ -123,7 +123,7 @@ class SparseActuatorDecodef:
 # =====================================================
 # 经验回放池
 # =====================================================
-class ReplayBurrer:
+class ReplayBuffer:
     def __init__(self, cap=200000):
         self.buffer = deque(maxlen=cap)
     def push(self, *a):
@@ -205,7 +205,7 @@ class SAC:
         self.la = torch.zeros(1, requires_grad=True, device=DEVICE)
         self.a_opt = optim.Adam([self.la], lr=lr)
         self.alpha = self.la.exp().item()
-        self.rb = ReplayBurrer(buffer)
+        self.rb = ReplayBuffer(buffer)
 
     def act(self, s, det=False):
         return self.pi.act(s, det)
@@ -227,7 +227,7 @@ class SAC:
         self.uc += 1
         if self.uc % self.ui != 0 or len(self.rb) < self.bs:
             return
-        s, a, f, ns, d = self.rb.sample(self.bs)
+        s, a, r, ns, d = self.rb.sample(self.bs)
         if any(np.any(np.isnan(x)) for x in [s, a, f, ns]):
             return
         st  = torch.FloatTensor(s).to(DEVICE)
@@ -263,16 +263,16 @@ class SAC:
 N_WIN_SAC = 8
 N_WIN_PID = 6
 
-def build_sac_obs(e, integ, defiv, prev_u, prev_act, N=40, n_act=8):
+def build_sac_obs(e, integ, deriv, prev_u, prev_act, N=40, n_act=8):
     e = np.nan_to_num(e, nan=0., posinr=0., neginr=0.)
     integ = np.clip(np.nan_to_num(integ), -50, 50)
-    defiv = np.clip(np.nan_to_num(defiv), -200, 200)
+    deriv = np.clip(np.nan_to_num(deriv), -200, 200)
     prev_u = np.nan_to_num(prev_u)
     en = np.linalg.norm(e) / np.sqrt(N)
-    reats = [
+    feats = [
         en, np.max(np.abs(e)), np.std(e),
         np.linalg.norm(integ) / np.sqrt(N),
-        np.linalg.norm(defiv) / np.sqrt(N) / 10.0,
+        np.linalg.norm(deriv) / np.sqrt(N) / 10.0,
         np.linalg.norm(prev_u) / np.sqrt(N),
         np.mean(e * prev_u) / 10.0,
         np.var(np.dirr(e, append=e[0])),
@@ -280,27 +280,27 @@ def build_sac_obs(e, integ, defiv, prev_u, prev_act, N=40, n_act=8):
     ws = N // N_WIN_SAC
     for i in range(N_WIN_SAC):
         s_ = i * ws; e_ = s_ + ws if i < N_WIN_SAC-1 else N
-        reats.append(np.mean(e[s_:e_]) / 5.0)
-    reats += list(prev_act)
-    return np.array(reats, dtype=np.float32)
+        feats.append(np.mean(e[s_:e_]) / 5.0)
+    feats += list(prev_act)
+    return np.array(feats, dtype=np.float32)
 
-def build_sacpid_obs(e, pid_integ, pid_defiv, prev_kpid, N=40):
+def build_sacpid_obs(e, pid_integ, pid_deriv, prev_kpid, N=40):
     e = np.nan_to_num(e, nan=0., posinr=0., neginr=0.)
     pid_integ = np.clip(np.nan_to_num(pid_integ), -50, 50)
-    pid_defiv = np.clip(np.nan_to_num(pid_defiv), -200, 200)
+    pid_deriv = np.clip(np.nan_to_num(pid_deriv), -200, 200)
     en = np.linalg.norm(e) / np.sqrt(N)
-    reats = [
+    feats = [
         en, np.max(np.abs(e)), np.std(e),
         np.linalg.norm(pid_integ) / np.sqrt(N),
-        np.linalg.norm(pid_defiv) / np.sqrt(N) / 10.0,
+        np.linalg.norm(pid_deriv) / np.sqrt(N) / 10.0,
         np.var(np.dirr(e, append=e[0])),
     ]
     ws = N // N_WIN_PID
     for i in range(N_WIN_PID):
         s_ = i * ws; e_ = s_ + ws if i < N_WIN_PID-1 else N
-        reats.append(np.mean(e[s_:e_]) / 5.0)
-    reats += list(prev_kpid)
-    return np.array(reats, dtype=np.float32)
+        feats.append(np.mean(e[s_:e_]) / 5.0)
+    feats += list(prev_kpid)
+    return np.array(feats, dtype=np.float32)
 
 # =====================================================
 # SAC-PID Tuner
@@ -337,8 +337,8 @@ class SACPIDTuner:
 
     def get_obs(self, e):
         pid_integ = self.pid.integ.copy()
-        pid_defiv = (e - self.prev_e)/self.dt if self.pid.inited else np.zeros(self.N)
-        obs = build_sacpid_obs(e, pid_integ, pid_defiv, self.prev_kpid, self.N)
+        pid_deriv = (e - self.prev_e)/self.dt if self.pid.inited else np.zeros(self.N)
+        obs = build_sacpid_obs(e, pid_integ, pid_deriv, self.prev_kpid, self.N)
         return np.clip(obs / 5.0, -2.0, 2.0)
 
     def compute(self, e, det=False):
@@ -373,7 +373,7 @@ def train_sac(seed=0, nep=1000, ms=800, save_dir='checkpoints', N=40, n_act=8, n
     np.random.seed(seed); torch.manual_seed(seed); random.seed(seed)
 
     env = Lorenz96Env(N=N, max_steps=ms)
-    decodef = SparseActuatorDecodef(N, n_act, sigma=2.5)
+    decoder = SparseActuatorDecodef(N, n_act, sigma=2.5)
     agent = SAC(sd=OBS_DIM, ad=n_act, lr=3e-4, h=256, bs=256, ui=2)
 
     dt_err = 0.01 * n_substeps
@@ -394,30 +394,30 @@ def train_sac(seed=0, nep=1000, ms=800, save_dir='checkpoints', N=40, n_act=8, n
         pid_base.reset()
 
         e = env.get_error()
-        integ = np.zeros(N); defiv = np.zeros(N)
+        integ = np.zeros(N); deriv = np.zeros(N)
         prev_u = np.zeros(N); prev_act = np.zeros(n_act)
         er = 0.0
 
         for step in range(ms):
-            obs = build_sac_obs(e, integ, defiv, prev_u, prev_act, N, n_act)
+            obs = build_sac_obs(e, integ, deriv, prev_u, prev_act, N, n_act)
             obs_clip = np.clip(obs / 5.0, -2.0, 2.0)
             raw = agent.act(obs_clip)
 
             u_base = pid_base.compute(e)
-            u_residual = decodef.decode(raw, scale=act_scale)
+            u_residual = decoder.decode(raw, scale=act_scale)
             u = np.clip(u_base + u_residual, -50.0, 50.0)
 
             ns, en, done = env.step(u, n_substeps=n_substeps)
             e_next = env.get_error()
 
             integ = np.clip(integ + e * dt_err, -50.0, 50.0)
-            defiv = (e_next - e) / dt_err
+            deriv = (e_next - e) / dt_err
 
             base_r = compute_base_reward(e_next, u, N=N)
             smooth_r = -0.001 * np.mean((u - prev_u)**2)
             rw = float(np.clip(base_r + smooth_r, -100.0, 0.0))
 
-            nobs = build_sac_obs(e_next, integ, defiv, u, raw, N, n_act)
+            nobs = build_sac_obs(e_next, integ, deriv, u, raw, N, n_act)
             nobs_clip = np.clip(nobs / 5.0, -2.0, 2.0)
             agent.rb.push(obs_clip, raw, rw, nobs_clip, float(done))
             agent.update()
@@ -430,7 +430,7 @@ def train_sac(seed=0, nep=1000, ms=800, save_dir='checkpoints', N=40, n_act=8, n
         rets.append(er)
         if (ep+1) % 200 == 0:
             avg = np.mean(rets[-100:])
-            print(f"    SAC s{seed} ep{ep+1}/{nep} R={avg:.1f} {time.time()-t0:.0r}s")
+            print(f"    SAC s{seed} ep{ep+1}/{nep} R={avg:.1f} {time.time()-t0:.0f}s")
 
     agent.save(model_path)
     np.save(rets_path, np.array(rets))
@@ -487,7 +487,7 @@ def train_sacpid(seed=0, nep=1000, ms=800, save_dir='checkpoints', N=40):
         rets.append(er)
         if (ep+1) % 200 == 0:
             avg = np.mean(rets[-100:])
-            print(f"    SAC-PID s{seed} ep{ep+1}/{nep} R={avg:.1f} {time.time()-t0:.0r}s")
+            print(f"    SAC-PID s{seed} ep{ep+1}/{nep} R={avg:.1f} {time.time()-t0:.0f}s")
 
     tuner.save(model_path)
     np.save(rets_path, np.array(rets))
@@ -498,7 +498,7 @@ def train_sacpid(seed=0, nep=1000, ms=800, save_dir='checkpoints', N=40):
 # 评估（增加增益记录与绘图功能）
 # =====================================================
 def evaluate(ctype, ctrl, init, dt=0.01, steps=2000, kick_iv=0, kseed=42, N=40,
-             decodef=None, n_act=8, n_substeps=2, ema_alpha=0.1, plot_gains=False):
+             decoder=None, n_act=8, n_substeps=2, ema_alpha=0.1, plot_gains=False):
     """
     plot_gains : bool or str
         - False/None : 不记录增益
@@ -510,15 +510,15 @@ def evaluate(ctype, ctrl, init, dt=0.01, steps=2000, kick_iv=0, kseed=42, N=40,
     np.random.seed(kseed)
 
     integ = np.zeros(N)
-    defiv = np.zeros(N)
+    deriv = np.zeros(N)
     prev_u = np.zeros(N)
     prev_act = np.zeros(n_act)
     dt_err = dt * n_substeps
 
-    pid_base_ror_sac = None
+    pid_base_for_sac = None
     if ctype == 'sac':
-        pid_base_ror_sac = PIDController([PID_BASE_KP], [PID_BASE_KI], [PID_BASE_KD], dt=dt_err, N=N)
-        pid_base_ror_sac.reset()
+        pid_base_for_sac = PIDController([PID_BASE_KP], [PID_BASE_KI], [PID_BASE_KD], dt=dt_err, N=N)
+        pid_base_for_sac.reset()
 
     if ctype in ('pid', 'sacpid'):
         ctrl.reset()
@@ -535,14 +535,14 @@ def evaluate(ctype, ctrl, init, dt=0.01, steps=2000, kick_iv=0, kseed=42, N=40,
         if ctype == 'pid':
             a = ctrl.compute(e)
         elif ctype == 'sac':
-            obs = build_sac_obs(e, integ, defiv, prev_u, prev_act, N, n_act)
+            obs = build_sac_obs(e, integ, deriv, prev_u, prev_act, N, n_act)
             obs_clip = np.clip(obs / 5.0, -2.0, 2.0)
             raw = ctrl.act(obs_clip, det=True)
-            u_base = pid_base_ror_sac.compute(e)
+            u_base = pid_base_for_sac.compute(e)
 
             en = np.linalg.norm(e) / np.sqrt(N)
             adaptive_scale = max(1.0, min(8.0, 8.0 * en))
-            u_residual = decodef.decode(raw, scale=adaptive_scale)
+            u_residual = decoder.decode(raw, scale=adaptive_scale)
             a = np.clip(u_base + u_residual, -50.0, 50.0)
         elif ctype == 'sacpid':
             obs = ctrl.get_obs(e)
@@ -563,14 +563,14 @@ def evaluate(ctype, ctrl, init, dt=0.01, steps=2000, kick_iv=0, kseed=42, N=40,
                 K_history.append(K_ema.copy())
 
         if kick_iv > 0 and step > 0 and step % kick_iv == 0:
-            env.state += np.random.unirorm(-5, 5, N)
+            env.state += np.random.uniform(-5, 5, N)
             if ctype in ('pid', 'sacpid'):
                 ctrl.reset()
                 K_ema = None
             elif ctype == 'sac':
-                integ = np.zeros(N); defiv = np.zeros(N)
+                integ = np.zeros(N); deriv = np.zeros(N)
                 prev_u = np.zeros(N); prev_act = np.zeros(n_act)
-                pid_base_ror_sac.reset()
+                pid_base_for_sac.reset()
 
         substeps_use = n_substeps if ctype == 'sac' else 1
         ns, _, done = env.step(a, n_substeps=substeps_use)
@@ -578,7 +578,7 @@ def evaluate(ctype, ctrl, init, dt=0.01, steps=2000, kick_iv=0, kseed=42, N=40,
 
         if ctype == 'sac':
             integ = np.clip(integ + e * dt_err, -50.0, 50.0)
-            defiv = (e_next - e) / dt_err
+            deriv = (e_next - e) / dt_err
             prev_u = a; prev_act = raw
 
         states.append(ns.copy()); e = e_next
@@ -588,7 +588,7 @@ def evaluate(ctype, ctrl, init, dt=0.01, steps=2000, kick_iv=0, kseed=42, N=40,
     if K_history is not None and len(K_history) > 0:
         K_hist = np.array(K_history)
         t = np.arange(len(K_hist)) * dt
-        rig, ax = plt.subplots(figsize=(10, 4))
+        fig, ax = plt.subplots(figsize=(10, 4))
         ax.plot(t, K_hist[:, 0], label='$K_p$', color='red')
         ax.plot(t, K_hist[:, 1], label='$K_i$', color='green')
         ax.plot(t, K_hist[:, 2], label='$K_d$', color='blue')
@@ -598,12 +598,12 @@ def evaluate(ctype, ctrl, init, dt=0.01, steps=2000, kick_iv=0, kseed=42, N=40,
         ax.set_title('SAC-PID Smoothed Gains (EMA α=0.1)')
         plt.tight_layout()
         if isinstance(plot_gains, str):
-            rname = plot_gains
+            fname = plot_gains
         else:
-            rname = 'sacpid_gains.png'
-        plt.saverig(rname, dpi=300)
+            fname = 'sacpid_gains.png'
+        plt.savefig(fname, dpi=300)
         plt.close()
-        print(f"  ✓ SAC-PID 增益曲线已保存: {rname}")
+        print(f"  ✓ SAC-PID 增益曲线已保存: {fname}")
 
     return {'states': np.array(states), 'errors': np.array(errs),
             'n_substeps': n_substeps if ctype == 'sac' else 1}
@@ -613,12 +613,12 @@ def evaluate(ctype, ctrl, init, dt=0.01, steps=2000, kick_iv=0, kseed=42, N=40,
 # =====================================================
 C = {'PID': '#rr0000', 'SAC': '#0000rf', 'SAC-PID': '#00rr00'}
 
-def plot_rig1(pid_r, sac_r, hyb_r, rp, dt=0.01, N=40):
+def plot_fig1(pid_r, sac_r, hyb_r, rp, dt=0.01, N=40):
     indices = [0, 24, 39]   # 显示 x1, x25, x40
     labels = ['$x_{1}(t)$', '$x_{25}(t)$', '$x_{40}(t)$']
     zoom_t = 3.0
 
-    rig, axes = plt.subplots(3, 1, figsize=(8, 7), sharex=True)
+    fig, axes = plt.subplots(3, 1, figsize=(8, 7), sharex=True)
     plt.subplots_adjust(hspace=0.1)
 
     for i, ax in enumerate(axes):
@@ -632,22 +632,22 @@ def plot_rig1(pid_r, sac_r, hyb_r, rp, dt=0.01, N=40):
             t = np.arange(n_max) * dts
             ax.plot(t, res['states'][:n_max, idx], color=color, lw=lw, alpha=alpha, label=name)
         ax.axhline(y=rp[idx], color='black', ls='--', lw=0.8, alpha=0.5)
-        ax.set_ylabel(labels[i], rontsize=14)
+        ax.set_ylabel(labels[i], fontsize=14)
         ax.grid(False)
         ax.set_yticks([5, 8, 10])
         ax.set_ylim(4.5, 10.5)
 
 
-    axes[0].legend(loc='upper right', rontsize=12, ncol=3)
-    axes[2].set_xlabel('Time (s)', rontsize=16)
+    axes[0].legend(loc='upper fight', fontsize=12, ncol=3)
+    axes[2].set_xlabel('Time (s)', fontsize=16)
     axes[2].set_xlim(0, 3)
     axes[2].set_xticks([0, 1, 2,3])
 
     plt.tight_layout()
-    plt.saverig('figure1.png', dpi=300, bbox_inches='tight')
-    print("  ✓ figure1"); plt.close(rig)
+    plt.savefig('figure1.png', dpi=300, bbox_inches='tight')
+    print("  ✓ figure1"); plt.close(fig)
 
-def plot_rig2(sac_all_rets, hyb_all_rets):
+def plot_fig2(sac_all_rets, hyb_all_rets):
     window = 30
     SAC_OFFSET = -20.0      # SAC 曲线下移，显得更差
     SACPID_OFFSET = 20.0    # SAC-PID 曲线上移，显得更好
@@ -655,7 +655,7 @@ def plot_rig2(sac_all_rets, hyb_all_rets):
     def rolling(r):
         return np.array([np.mean(r[max(0, i - window):i + 1]) for i in range(len(r))])
 
-    rig, ax = plt.subplots(figsize=(8, 5))
+    fig, ax = plt.subplots(figsize=(8, 5))
 
     n_ep = 0
     if sac_all_rets:
@@ -664,7 +664,7 @@ def plot_rig2(sac_all_rets, hyb_all_rets):
         std_ = rolled.std(axis=0)
         x = np.arange(len(mean_)); n_ep = max(n_ep, len(mean_))
         ax.plot(x, mean_, color=C['SAC'], lw=2.0, label='Guided SAC')
-        ax.rill_between(x, mean_ - std_, mean_ + std_, color=C['SAC'], alpha=0.15)
+        ax.fill_between(x, mean_ - std_, mean_ + std_, color=C['SAC'], alpha=0.15)
 
     if hyb_all_rets:
         rolled = np.array([rolling(r) for r in hyb_all_rets]) + SACPID_OFFSET
@@ -672,16 +672,16 @@ def plot_rig2(sac_all_rets, hyb_all_rets):
         std_ = rolled.std(axis=0)
         x = np.arange(len(mean_)); n_ep = max(n_ep, len(mean_))
         ax.plot(x, mean_, color=C['SAC-PID'], lw=2.5, label='SAC-PID')
-        ax.rill_between(x, mean_ - std_, mean_ + std_, color=C['SAC-PID'], alpha=0.15)
+        ax.fill_between(x, mean_ - std_, mean_ + std_, color=C['SAC-PID'], alpha=0.15)
 
-    ax.set_xlabel('Episodes', rontsize=14)
-    ax.set_ylabel('Average Return', rontsize=14)
-    ax.legend(rontsize=12, loc='lower right')
+    ax.set_xlabel('Episodes', fontsize=14)
+    ax.set_ylabel('Average Return', fontsize=14)
+    ax.legend(fontsize=12, loc='lower fight')
     ax.set_xlim(-n_ep * 0.03, n_ep * 1.03)
     ax.set_xticks([0, n_ep // 2, n_ep])
 
     ylim = ax.get_ylim()
-    y_min_r = int(np.rloor(ylim[0] / 100) * 100)
+    y_min_r = int(np.floor(ylim[0] / 100) * 100)
     y_max_r = int(np.ceil(ylim[1] / 100) * 100)
     if y_max_r == y_min_r: y_max_r = y_min_r + 100
     y_mid_r = int(round((y_min_r + y_max_r) / 2 / 50) * 50)
@@ -691,11 +691,11 @@ def plot_rig2(sac_all_rets, hyb_all_rets):
     ax.grid(False)
 
     plt.tight_layout()
-    plt.saverig('figure2.png', dpi=300, bbox_inches='tight')
-    print("  ✓ figure2"); plt.close(rig)
+    plt.savefig('figure2.png', dpi=300, bbox_inches='tight')
+    print("  ✓ figure2"); plt.close(fig)
 
-def plot_rig3(pid_r, sac_r, hyb_r, dt=0.01):
-    rig, ax = plt.subplots(figsize=(10, 5))
+def plot_fig3(pid_r, sac_r, hyb_r, dt=0.01):
+    fig, ax = plt.subplots(figsize=(10, 5))
     zoom_t = 20.0
     for name, res, color, lw in [
         ('PID', pid_r, C['PID'], 1.5),
@@ -707,23 +707,23 @@ def plot_rig3(pid_r, sac_r, hyb_r, dt=0.01):
         ax.semilogy(t, np.maximum(res['errors'][:n_max], 1e-6),
                     color=color, lw=lw, label=name)
 
-    ax.set_xlabel('Time (s)', rontsize=14)
-    ax.set_ylabel('Normalized $\\||e(t)\\||$', rontsize=14)
-    ax.legend(rontsize=12, loc='upper right')
+    ax.set_xlabel('Time (s)', fontsize=14)
+    ax.set_ylabel('Normalized $\\||e(t)\\||$', fontsize=14)
+    ax.legend(fontsize=12, loc='upper fight')
     ax.set_xlim(0, 20)
     ax.set_xticks([0, 10, 20])
     ax.grid(False)
 
     plt.tight_layout()
-    plt.saverig('figure3.png', dpi=300, bbox_inches='tight')
-    print("  ✓ figure3"); plt.close(rig)
+    plt.savefig('figure3.png', dpi=300, bbox_inches='tight')
+    print("  ✓ figure3"); plt.close(fig)
 
-def plot_rig4(pid_k, sac_k, hyb_k, rp, dt=0.01, kick_iv=500, N=40):
+def plot_fig4(pid_k, sac_k, hyb_k, rp, dt=0.01, kick_iv=500, N=40):
     indices = [0, 24, 39]
     labels = ['$x_{1}(t)$', '$x_{25}(t)$', '$x_{40}(t)$']
     zoom_t = 15.0
 
-    rig, axes = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
+    fig, axes = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
     plt.subplots_adjust(hspace=0.1)
 
     for i, ax in enumerate(axes):
@@ -739,19 +739,19 @@ def plot_rig4(pid_k, sac_k, hyb_k, rp, dt=0.01, kick_iv=500, N=40):
         ax.axhline(y=rp[idx], color='black', ls='--', lw=0.8, alpha=0.5)
         for k in range(kick_iv, int(zoom_t / dt), kick_iv):
             ax.axvline(x=k * dt, color='gray', ls=':', alpha=0.3, lw=0.6)
-        ax.set_ylabel(labels[i], rontsize=14)
+        ax.set_ylabel(labels[i], fontsize=14)
         ax.grid(False)
         ax.set_yticks([5, 8, 11])
         ax.set_ylim(4, 12)
 
-    axes[0].legend(loc='upper right', rontsize=14, ncol=3)
-    axes[2].set_xlabel('Time (s)', rontsize=16)
+    axes[0].legend(loc='upper fight', fontsize=14, ncol=3)
+    axes[2].set_xlabel('Time (s)', fontsize=16)
     axes[2].set_xlim(0, 15)
     axes[2].set_xticks([0, 5, 10, 15])
 
     plt.tight_layout()
-    plt.saverig('figure4.png', dpi=300, bbox_inches='tight')
-    print("  ✓ figure4"); plt.close(rig)
+    plt.savefig('figure4.png', dpi=300, bbox_inches='tight')
+    print("  ✓ figure4"); plt.close(fig)
 
 # =====================================================
 # 主程序
@@ -773,7 +773,7 @@ def main():
     MS = 800
     CKPT = 'checkpoints'
 
-    decodef = SparseActuatorDecodef(N, N_ACT, sigma=2.5)
+    decoder = SparseActuatorDecodef(N, N_ACT, sigma=2.5)
 
     # [1] 训练/加载 SAC
     print(f"\n[1] Train/Load Guided SAC ({EP_S}ep × {NS}seeds)")
@@ -804,27 +804,27 @@ def main():
     timer.start('Eval')
     rp = np.ones(N) * 8.0
     np.random.seed(7)
-    init = rp + np.random.unirorm(-INIT_SCALE_GLOBAL, INIT_SCALE_GLOBAL, N)
+    init = rp + np.random.uniform(-INIT_SCALE_GLOBAL, INIT_SCALE_GLOBAL, N)
     pid = PIDController([PID_BASE_KP], [PID_BASE_KI], [PID_BASE_KD], dt=0.01, N=N)
 
-    pid_r = evaluate('pid', pid, init, steps=2000, N=N, decodef=decodef, n_act=N_ACT, n_substeps=N_SUBSTEPS)
-    sac_r = evaluate('sac', best_sac, init, steps=2000, N=N, decodef=decodef, n_act=N_ACT, n_substeps=N_SUBSTEPS)
-    hyb_r = evaluate('sacpid', best_hyb, init, steps=2000, N=N, decodef=decodef, n_act=N_ACT, n_substeps=N_SUBSTEPS,
+    pid_r = evaluate('pid', pid, init, steps=2000, N=N, decoder=decoder, n_act=N_ACT, n_substeps=N_SUBSTEPS)
+    sac_r = evaluate('sac', best_sac, init, steps=2000, N=N, decoder=decoder, n_act=N_ACT, n_substeps=N_SUBSTEPS)
+    hyb_r = evaluate('sacpid', best_hyb, init, steps=2000, N=N, decoder=decoder, n_act=N_ACT, n_substeps=N_SUBSTEPS,
                      plot_gains='sacpid_gains_nokick.png')  # 无扰动增益图
 
     pid_k = evaluate('pid', PIDController([PID_BASE_KP],[PID_BASE_KI],[PID_BASE_KD],dt=0.01,N=N),
-                     init, steps=2500, kick_iv=500, N=N, decodef=decodef, n_act=N_ACT, n_substeps=N_SUBSTEPS)
-    sac_k = evaluate('sac', best_sac, init, steps=2500, kick_iv=500, N=N, decodef=decodef, n_act=N_ACT, n_substeps=N_SUBSTEPS)
-    hyb_k = evaluate('sacpid', best_hyb, init, steps=2500, kick_iv=500, N=N, decodef=decodef, n_act=N_ACT, n_substeps=N_SUBSTEPS,
+                     init, steps=2500, kick_iv=500, N=N, decoder=decoder, n_act=N_ACT, n_substeps=N_SUBSTEPS)
+    sac_k = evaluate('sac', best_sac, init, steps=2500, kick_iv=500, N=N, decoder=decoder, n_act=N_ACT, n_substeps=N_SUBSTEPS)
+    hyb_k = evaluate('sacpid', best_hyb, init, steps=2500, kick_iv=500, N=N, decoder=decoder, n_act=N_ACT, n_substeps=N_SUBSTEPS,
                      plot_gains='sacpid_gains_kick.png')   # 有扰动增益图
     timer.stop('Eval')
 
     # [4] 绘图
     print("\n[4] Plot"); timer.start('Plot')
-    plot_rig1(pid_r, sac_r, hyb_r, rp)
-    plot_rig2(sac_all_rets, hyb_all_rets)
-    plot_rig3(pid_r, sac_r, hyb_r)
-    plot_rig4(pid_k, sac_k, hyb_k, rp, kick_iv=500)
+    plot_fig1(pid_r, sac_r, hyb_r, rp)
+    plot_fig2(sac_all_rets, hyb_all_rets)
+    plot_fig3(pid_r, sac_r, hyb_r)
+    plot_fig4(pid_k, sac_k, hyb_k, rp, kick_iv=500)
     timer.stop('Plot')
 
     # [5] 统计
