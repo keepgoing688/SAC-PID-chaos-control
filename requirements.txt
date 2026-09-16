@@ -1,0 +1,6 @@
+# Tested with Python 3.9.25 (Anaconda environment: DL)
+numpy==1.21.5
+torch==2.4.1
+matplotlib==3.5.2
+optuna==4.8.0
+scipy==1.9.3

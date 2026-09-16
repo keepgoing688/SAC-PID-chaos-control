@@ -12,3 +12,6 @@ __pycache__/
 .recovery_backup/
 # Preserved metadata from the former nested Lorenz repository
 .lorenz_git_backup/
+
+# Keep the dependency manifest despite the raw-log rule
+!requirements.txt
