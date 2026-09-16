@@ -1,0 +1,14 @@
+# Python and IDE generated files
+__pycache__/
+*.py[cod]
+.idea/
+
+# Raw execution logs
+*.txt
+
+# Temporary recovery material; not part of the project
+.recovery_tools/
+.recovered/
+.recovery_backup/
+# Preserved metadata from the former nested Lorenz repository
+.lorenz_git_backup/

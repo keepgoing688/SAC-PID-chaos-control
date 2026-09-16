@@ -1,0 +1,11 @@
+{
+  "lr": 0.00020141765830761088,
+  "gamma": 0.9700745785086662,
+  "tau": 0.0018964833627600223,
+  "h": 256,
+  "bs": 256,
+  "best_J": -20.33447387059216,
+  "total_time_sec": 97937.0,
+  "avg_trial_sec": 1958.7,
+  "note": "Optuna TPE (with Pruning) Lorenz96, J=0.5*R_SAC+0.5*R_SACPID"
+}
